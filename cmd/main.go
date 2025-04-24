@@ -1,45 +1,21 @@
-package main
+package cmd
 
 import (
 	"fmt"
-	"log"
+	"os"
 
-	"github.com/papidb/drift-detector/internal/drift"
-	"github.com/papidb/drift-detector/internal/parser"
+	"github.com/spf13/cobra"
 )
 
-func main() {
-	println("Hello, Terraform Drift Detector!")
+var rootCmd = &cobra.Command{
+	Use:   "drift-detector",
+	Short: "Detect infrastructure drift between Terraform and AWS",
+	Long:  `A tool to detect and report drift between Terraform-managed infrastructure and actual AWS resources.`,
+}
 
-	// Example usage
-	source := parser.ParsedEC2Config{
-		Name: "app_server",
-		Data: parser.EC2Config{
-			AMI:          "ami-830c94e3",
-			InstanceType: "t2.macro",
-			Tags: map[string]string{
-				"Name": "ExampleAppServerInstance",
-			},
-		},
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 	}
-
-	target := parser.ParsedEC2Config{
-		Name: "app_server",
-		Data: parser.EC2Config{
-			AMI:          "ami-830c94e3",
-			InstanceType: "t2.micro",
-			Tags: map[string]string{
-				"Name": "fine-named",
-				"Env":  "production",
-			},
-		},
-	}
-
-	drifts, err := drift.CompareEC2Configs(source, target)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Configuration Drifts:")
-	drift.PrintDrifts(drifts)
 }

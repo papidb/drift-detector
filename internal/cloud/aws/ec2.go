@@ -27,8 +27,8 @@ func NewEC2Client(ctx context.Context) (*ec2.Client, error) {
 }
 
 func FetchEC2Instance(ctx context.Context, client EC2API, reader io.Reader, instanceID string) (*parser.EC2Config, error) {
+	// read from the reader if it's not nil
 	if reader != nil {
-		// Read from JSON (mocked input)
 		var instance types.Instance
 		if err := json.NewDecoder(reader).Decode(&instance); err != nil {
 			return nil, fmt.Errorf("failed to decode instance from reader: %w", err)
@@ -36,14 +36,7 @@ func FetchEC2Instance(ctx context.Context, client EC2API, reader io.Reader, inst
 		return transformAWSInstanceToEC2(&instance), nil
 	}
 
-	// Otherwise fetch from AWS
-	// cfg, err := config.LoadDefaultConfig(ctx)
-	// if err != nil {
-	// 	return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	// }
-
-	// client := ec2.NewFromConfig(cfg)
-
+	// If reader is nil, fetch the instance from AWS
 	output, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		InstanceIds: []string{instanceID},
 	})
