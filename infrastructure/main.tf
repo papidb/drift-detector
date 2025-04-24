@@ -10,12 +10,17 @@ terraform {
 }
 
 provider "aws" {
-  region  = "us-west-2"
+  region = "us-west-2"
 }
 
 resource "aws_instance" "app_server" {
   ami           = "ami-830c94e3"
   instance_type = "t2.micro"
+  source_dest_check = true
+  metadata_options {
+    http_endpoint = "enabled"
+    http_tokens = "optional"
+  }
 
   tags = {
     Name = "ExampleAppServerInstance"

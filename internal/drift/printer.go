@@ -16,6 +16,8 @@ func PrintDrifts(drifts []Drift) {
 		return
 	}
 
+	fmt.Println("Kindly note that green indicates the new value in aws and red indicates the old value in terraform.")
+
 	for _, d := range drifts {
 		fmt.Println(yellow(
 			fmt.Sprintf("%s %s", "Detected drift in", d.Name),

@@ -9,9 +9,16 @@ import (
 )
 
 type EC2Config struct {
-	AMI          string            `hcl:"ami,attr"`
-	InstanceType string            `hcl:"instance_type,attr"`
-	Tags         map[string]string `hcl:"tags,attr"`
+	AMI             string            `hcl:"ami,attr"`
+	InstanceType    string            `hcl:"instance_type,attr"`
+	Tags            map[string]string `hcl:"tags,attr"`
+	SourceDestCheck bool              `hcl:"source_dest_check,attr"`
+	MetadataOptions MetadataOptions   `hcl:"metadata_options,block"`
+}
+
+type MetadataOptions struct {
+	HttpEndpoint string `hcl:"http_endpoint,attr"`
+	HttpTokens   string `hcl:"http_tokens,attr"`
 }
 
 type ParsedEC2Config struct {

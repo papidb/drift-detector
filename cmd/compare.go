@@ -19,10 +19,10 @@ var (
 func loadConfigs(ctx context.Context, instanceID, awsJSONPath, tfPath string) (parser.ParsedEC2Config, parser.ParsedEC2Config, error) {
 	nilParserConfig := parser.ParsedEC2Config{}
 	configs, err := parser.ParseTerraformHCLFile(tfPath)
-	config := parser.EC2Config{}
+	tfConfig := parser.EC2Config{}
 	for _, cfg := range configs {
-		if cfg.Name == instanceID {
-			config = cfg.Data
+		if cfg.Name == "app_server" {
+			tfConfig = cfg.Data
 			break
 		}
 	}
@@ -32,7 +32,6 @@ func loadConfigs(ctx context.Context, instanceID, awsJSONPath, tfPath string) (p
 
 	// Load AWS config from file or fetch
 	var awsCfg *parser.EC2Config
-	var name string
 
 	if awsJSONPath != "" {
 		awsFileReader, fileCloser, err := aws.ReaderFromFilePath(awsJSONPath)
@@ -44,7 +43,6 @@ func loadConfigs(ctx context.Context, instanceID, awsJSONPath, tfPath string) (p
 		if err != nil {
 			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to fetch aws instance: %w", err)
 		}
-		name = instanceID
 		defer fileCloser()
 	} else {
 		awsConfig, err := aws.NewEC2Client(ctx)
@@ -56,11 +54,10 @@ func loadConfigs(ctx context.Context, instanceID, awsJSONPath, tfPath string) (p
 		if err != nil {
 			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to fetch aws instance: %w", err)
 		}
-		name = instanceID
 	}
 
-	return parser.ParsedEC2Config{Name: name, Data: config},
-		parser.ParsedEC2Config{Name: name, Data: *awsCfg},
+	return parser.ParsedEC2Config{Name: instanceID, Data: tfConfig},
+		parser.ParsedEC2Config{Name: instanceID, Data: *awsCfg},
 		nil
 }
 
@@ -69,15 +66,16 @@ var compareCmd = &cobra.Command{
 	Short: "Compare a Terraform EC2 config against the actual AWS EC2 instance",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
-		// return tui.Run(ctx, instanceID, awsJSONPath, tfPath)
-		oldCfg, newCfg, err := loadConfigs(ctx, instanceID, awsJSONPath, tfPath)
+		tfConfig, awsConfig, err := loadConfigs(ctx, instanceID, awsJSONPath, tfPath)
 		if err != nil {
 			return err
 		}
-		drifts, err := drift.CompareEC2Configs(oldCfg, newCfg)
+		drifts, err := drift.CompareEC2Configs(tfConfig, awsConfig)
 		if err != nil {
 			return err
 		}
+		fmt.Println(drifts)
+
 		drift.PrintDrifts(drifts)
 		return nil
 	},
@@ -88,7 +86,7 @@ func init() {
 	compareCmd.Flags().StringVarP(&awsJSONPath, "aws-json", "j", "", "Path to sample AWS EC2 JSON file")
 	compareCmd.Flags().StringVarP(&tfPath, "tf-path", "t", "", "Path to Terraform HCL or state file (required)")
 	compareCmd.MarkFlagRequired("instance-id")
-	compareCmd.MarkFlagRequired("aws-json")
+	// compareCmd.MarkFlagRequired("aws-json")
 	compareCmd.MarkFlagRequired("tf-path")
 
 	// compareCmd.PreRunE = func(cmd *cobra.Command, args []string) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -19,11 +20,11 @@ type EC2API interface {
 
 // Helper to replace the actual EC2 client creation
 func NewEC2Client(ctx context.Context) (*ec2.Client, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
+	config, err := config.LoadDefaultConfig(ctx, config.WithRegion("us-west-2"))
 	if err != nil {
 		return nil, err
 	}
-	return ec2.NewFromConfig(cfg), nil
+	return ec2.NewFromConfig(config), nil
 }
 
 func FetchEC2Instance(ctx context.Context, client EC2API, reader io.Reader, instanceID string) (*parser.EC2Config, error) {
@@ -37,7 +38,6 @@ func FetchEC2Instance(ctx context.Context, client EC2API, reader io.Reader, inst
 		// find reservation with the instance ID
 		for _, reservation := range output.Reservations {
 			for _, instance := range reservation.Instances {
-				fmt.Println(*instance.InstanceId, instanceID)
 				if instance.InstanceId != nil && *instance.InstanceId == instanceID {
 					return transformAWSInstanceToEC2(&instance), nil
 				}
@@ -65,13 +65,18 @@ func FetchEC2Instance(ctx context.Context, client EC2API, reader io.Reader, inst
 func transformAWSInstanceToEC2(instance *types.Instance) *parser.EC2Config {
 	tags := make(map[string]string)
 	for _, tag := range instance.Tags {
-		tags[*tag.Key] = *tag.Value
+		if tag.Key != nil && tag.Value != nil {
+			tags[*tag.Key] = *tag.Value
+		}
 	}
 
 	return &parser.EC2Config{
-		// InstanceID:   aws.ToString(instance.InstanceId),
-		InstanceType: string(instance.InstanceType),
-		// ImageID:      aws.ToString(instance.ImageId),
-		Tags: tags,
+		InstanceType:    aws.ToString((*string)(&instance.InstanceType)),
+		Tags:            tags,
+		SourceDestCheck: aws.ToBool(instance.SourceDestCheck),
+		MetadataOptions: parser.MetadataOptions{
+			// HttpEndpoint: aws.ToString(instance.MetadataOptions.HttpEndpoint.),
+			// HttpTokens:   aws.ToString(instance.MetadataOptions.HttpTokens),
+		},
 	}
 }
