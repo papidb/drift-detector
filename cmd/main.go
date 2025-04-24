@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/papidb/drift-detector/internal/drift"
 	"github.com/papidb/drift-detector/internal/parser"
@@ -34,7 +35,10 @@ func main() {
 		},
 	}
 
-	drifts := drift.CompareEC2Configs(source, target)
+	drifts, err := drift.CompareEC2Configs(source, target)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println("Configuration Drifts:")
 	drift.PrintDrifts(drifts)

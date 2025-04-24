@@ -2,6 +2,7 @@ package drift_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/papidb/drift-detector/internal/drift"
@@ -19,7 +20,10 @@ func TestCompareEC2Configs_NoDrift(t *testing.T) {
 	}
 	new := old // identical
 
-	drifts := drift.CompareEC2Configs(old, new)
+	drifts, err := drift.CompareEC2Configs(old, new)
+	if err != nil {
+		t.Errorf("Expected no error, got %+v", err)
+	}
 
 	if len(drifts) != 0 {
 		t.Errorf("Expected no drift, got %+v", drifts)
@@ -52,7 +56,10 @@ func TestCompareEC2Configs_FieldChange(t *testing.T) {
 		},
 	}
 
-	drifts := drift.CompareEC2Configs(old, new)
+	drifts, err := drift.CompareEC2Configs(old, new)
+	if err != nil {
+		t.Errorf("Expected no error, got %+v", err)
+	}
 
 	if !reflect.DeepEqual(drifts, expected) {
 		t.Errorf("Expected %+v, got %+v", expected, drifts)
@@ -79,7 +86,10 @@ func TestCompareEC2Configs_TagValueChanged(t *testing.T) {
 		},
 	}
 
-	drifts := drift.CompareEC2Configs(old, new)
+	drifts, err := drift.CompareEC2Configs(old, new)
+	if err != nil {
+		t.Errorf("Expected no error, got %+v", err)
+	}
 
 	if !reflect.DeepEqual(drifts, expected) {
 		t.Errorf("Expected %+v, got %+v", expected, drifts)
@@ -106,7 +116,10 @@ func TestCompareEC2Configs_TagAdded(t *testing.T) {
 		},
 	}
 
-	drifts := drift.CompareEC2Configs(old, new)
+	drifts, err := drift.CompareEC2Configs(old, new)
+	if err != nil {
+		t.Errorf("Expected no error, got %+v", err)
+	}
 
 	if !reflect.DeepEqual(drifts, expected) {
 		t.Errorf("Expected %+v, got %+v", expected, drifts)
@@ -133,9 +146,39 @@ func TestCompareEC2Configs_TagRemoved(t *testing.T) {
 		},
 	}
 
-	drifts := drift.CompareEC2Configs(old, new)
+	drifts, err := drift.CompareEC2Configs(old, new)
+	if err != nil {
+		t.Errorf("Expected no error, got %+v", err)
+	}
 
 	if !reflect.DeepEqual(drifts, expected) {
 		t.Errorf("Expected %+v, got %+v", expected, drifts)
+	}
+}
+
+func TestCompareEC2Configs_NameMisMatch(t *testing.T) {
+	old := parser.ParsedEC2Config{
+		Name: "web-server",
+		Data: parser.EC2Config{
+			AMI:          "ami-123",
+			InstanceType: "t2.micro",
+			Tags:         map[string]string{"env": "dev"},
+		},
+	}
+	new := parser.ParsedEC2Config{
+		Name: "web-server-2",
+		Data: parser.EC2Config{
+			AMI:          "ami-456",
+			InstanceType: "t2.micro",
+			Tags:         map[string]string{"env": "dev"},
+		},
+	}
+
+	_, err := drift.CompareEC2Configs(old, new)
+	if err == nil {
+		t.Errorf("Expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "resource names do not match") {
+		t.Errorf("Expected error to contain 'resource names do not match', got %+v", err)
 	}
 }

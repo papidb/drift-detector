@@ -13,8 +13,11 @@ type Drift struct {
 	NewValue interface{}
 }
 
-func CompareEC2Configs(old parser.ParsedEC2Config, new parser.ParsedEC2Config) []Drift {
-	return compareValues(reflect.ValueOf(old.Data), reflect.ValueOf(new.Data), "")
+func CompareEC2Configs(old parser.ParsedEC2Config, new parser.ParsedEC2Config) ([]Drift, error) {
+	if old.Name != new.Name {
+		return nil, fmt.Errorf("resource names do not match: %s vs %s", old.Name, new.Name)
+	}
+	return compareValues(reflect.ValueOf(old.Data), reflect.ValueOf(new.Data), ""), nil
 }
 
 func compareValues(oldVal, newVal reflect.Value, path string) []Drift {
