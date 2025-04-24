@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/papidb/drift-detector/internal/cloud/aws"
@@ -37,12 +36,6 @@ func loadConfigs(ctx context.Context, instanceID, awsJSONPath, tfPath string) (p
 	var name string
 
 	if awsJSONPath != "" {
-		awsFile, err := os.Open(awsJSONPath)
-		if err != nil {
-			return parser.ParsedEC2Config{}, parser.ParsedEC2Config{}, fmt.Errorf("failed to open aws json file: %w", err)
-		}
-		defer awsFile.Close()
-
 		awsFileReader, fileCloser, err := aws.ReaderFromFilePath(awsJSONPath)
 		if err != nil {
 			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to parse aws json: %w", err)

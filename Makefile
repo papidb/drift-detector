@@ -33,3 +33,9 @@ run:
 	go run cmd/main.go
 
 .PHONY: run
+
+# helper functions
+generate-example-data: 
+	aws ec2 describe-instances --region us-west-2 > sample-data/ec2-instances.json
+
+.PHONY: generate-example-data

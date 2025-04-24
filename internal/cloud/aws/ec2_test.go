@@ -24,7 +24,7 @@ func (m *MockEC2Client) DescribeInstances(ctx context.Context, params *ec2.Descr
 
 func TestFetchEC2Instance(t *testing.T) {
 	ctx := context.Background()
-	instanceID := "random-instance-id"
+	instanceID := "i-0b0c71db8f5d9497c"
 
 	tests := []struct {
 		name           string

@@ -12,7 +12,7 @@ import (
 	"github.com/papidb/drift-detector/internal/parser"
 )
 
-// EC2API is an interface that matches the EC2 client's DescribeInstances method
+// EC2API is an interface that matches the aws's EC2 client's DescribeInstances method
 type EC2API interface {
 	DescribeInstances(ctx context.Context, params *ec2.DescribeInstancesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error)
 }
@@ -29,11 +29,22 @@ func NewEC2Client(ctx context.Context) (*ec2.Client, error) {
 func FetchEC2Instance(ctx context.Context, client EC2API, reader io.Reader, instanceID string) (*parser.EC2Config, error) {
 	// read from the reader if it's not nil
 	if reader != nil {
-		var instance types.Instance
-		if err := json.NewDecoder(reader).Decode(&instance); err != nil {
-			return nil, fmt.Errorf("failed to decode instance from reader: %w", err)
+		var output *ec2.DescribeInstancesOutput
+		if err := json.NewDecoder(reader).Decode(&output); err != nil {
+			return nil, fmt.Errorf("failed to decode reservations from reader: %w", err)
 		}
-		return transformAWSInstanceToEC2(&instance), nil
+
+		// find reservation with the instance ID
+		for _, reservation := range output.Reservations {
+			for _, instance := range reservation.Instances {
+				fmt.Println(*instance.InstanceId, instanceID)
+				if instance.InstanceId != nil && *instance.InstanceId == instanceID {
+					return transformAWSInstanceToEC2(&instance), nil
+				}
+			}
+		}
+
+		return nil, fmt.Errorf("no instance found in the provided JSON")
 	}
 
 	// If reader is nil, fetch the instance from AWS
