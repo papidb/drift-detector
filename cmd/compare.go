@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/papidb/drift-detector/internal/types"
 	"github.com/papidb/drift-detector/pkg"
 
-	awsUtils "github.com/papidb/drift-detector/pkg/cloud/aws"
+	awsRepository "github.com/papidb/drift-detector/pkg/cloud/aws/repository"
 	"github.com/papidb/drift-detector/pkg/common"
 	"github.com/papidb/drift-detector/pkg/logger"
 	"github.com/papidb/drift-detector/pkg/output"
@@ -22,12 +23,22 @@ import (
 
 func loadConfigs(ctx context.Context, app *pkg.App) ([]types.Resource, []types.Resource, error) {
 	app.Logger.Debug("Loading AWS config")
-	stateResources, err := parser.ParseTerraformStateFile(app.Options.TFPath)
+	file, err := os.Open(app.Options.TFPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to open state file: %w", err)
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read state file: %w", err)
+	}
+
+	stateResources, err := parser.ParseTerraformStateFile(data)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse tf config: %w", err)
 	}
 
-	var ec2Repo awsUtils.EC2Repository
+	var ec2Repo awsRepository.EC2Repository
 
 	if app.Options.AWSPath != "" {
 		file, err := os.Open(app.Options.AWSPath)
@@ -36,9 +47,9 @@ func loadConfigs(ctx context.Context, app *pkg.App) ([]types.Resource, []types.R
 		}
 		defer file.Close()
 
-		ec2Repo = awsUtils.NewJSONEC2Repo(file)
+		ec2Repo = awsRepository.NewJSONEC2Repo(file)
 	} else {
-		ec2Repo = awsUtils.NewEC2Repo(app.Session)
+		ec2Repo = awsRepository.NewEC2Repo(app.Session)
 	}
 
 	awsResources, err := ec2Repo.ListInstances(ctx)

@@ -45,7 +45,6 @@ func CompareEC2Configs(old, new types.Resource) ([]types.Drift, error) {
 	newTags, newOk := newData["tags"].(map[string]string)
 	if oldOk && newOk {
 		if !areTagsEqual(oldTags, newTags) {
-			fmt.Println("not equal")
 			drifts = append(drifts, types.Drift{
 				Name:     "tags",
 				OldValue: oldTags,
@@ -53,7 +52,6 @@ func CompareEC2Configs(old, new types.Resource) ([]types.Drift, error) {
 			})
 		}
 	} else if oldData["tags"] != newData["tags"] {
-		fmt.Println("fallback")
 		// Fallback for when tags are not map[string]string or one is nil
 		drifts = append(drifts, types.Drift{
 			Name:     "tags",

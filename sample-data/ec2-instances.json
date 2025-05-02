@@ -83,7 +83,7 @@
                     "Tags": [
                         {
                             "Key": "Name",
-                            "Value": "ExampleAppServerInstance"
+                            "Value": "Daniel"
                         }
                     ],
                     "VirtualizationType": "hvm",
