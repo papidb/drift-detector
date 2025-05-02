@@ -1,4 +1,4 @@
-package aws_test
+package json_test
 
 import (
 	"io"
@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/papidb/drift-detector/internal/cloud/aws"
+	"github.com/papidb/drift-detector/pkg/json"
 )
 
 func TestReaderFromFilePath(t *testing.T) {
@@ -60,7 +60,7 @@ func TestReaderFromFilePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader, closeFn, err := aws.ReaderFromFilePath(tt.path)
+			reader, closeFn, err := json.ReaderFromFilePath(tt.path)
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ReaderFromFilePath() error = %v, wantErr %v", err, tt.wantErr)

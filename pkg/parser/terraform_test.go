@@ -3,7 +3,7 @@ package parser_test
 import (
 	"testing"
 
-	"github.com/papidb/drift-detector/internal/parser"
+	"github.com/papidb/drift-detector/pkg/parser"
 )
 
 func ParseTerraformHCLFile_ValidFile(t *testing.T) {

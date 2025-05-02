@@ -3,101 +3,170 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
+	"sync"
 
-	"github.com/papidb/drift-detector/internal/cloud/aws"
-	"github.com/papidb/drift-detector/internal/drift"
-	"github.com/papidb/drift-detector/internal/parser"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/papidb/drift-detector/internal/drift-detectors"
+	"github.com/papidb/drift-detector/internal/types"
+	"github.com/papidb/drift-detector/pkg"
+
+	awsUtils "github.com/papidb/drift-detector/pkg/cloud/aws"
+	"github.com/papidb/drift-detector/pkg/common"
+	"github.com/papidb/drift-detector/pkg/logger"
+	"github.com/papidb/drift-detector/pkg/output"
+	"github.com/papidb/drift-detector/pkg/parser"
 	"github.com/spf13/cobra"
 )
 
-var (
-	instanceID  string
-	awsJSONPath string
-	tfPath      string
-)
-
-func loadConfigs(ctx context.Context, instanceID, awsJSONPath, tfPath string) (parser.ParsedEC2Config, parser.ParsedEC2Config, error) {
-	nilParserConfig := parser.ParsedEC2Config{}
-	configs, err := parser.ParseTerraformHCLFile(tfPath)
-	tfConfig := parser.EC2Config{}
-	for _, cfg := range configs {
-		if cfg.Name == "app_server" {
-			tfConfig = cfg.Data
-			break
-		}
-	}
+func loadConfigs(ctx context.Context, app *pkg.App) ([]types.Resource, []types.Resource, error) {
+	app.Logger.Debug("Loading AWS config")
+	stateResources, err := parser.ParseTerraformStateFile(app.Options.TFPath)
 	if err != nil {
-		return parser.ParsedEC2Config{}, parser.ParsedEC2Config{}, fmt.Errorf("failed to parse tf config: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse tf config: %w", err)
 	}
 
-	// Load AWS config from file or fetch
-	var awsCfg *parser.EC2Config
+	var ec2Repo awsUtils.EC2Repository
 
-	if awsJSONPath != "" {
-		awsFileReader, fileCloser, err := aws.ReaderFromFilePath(awsJSONPath)
+	if app.Options.AWSPath != "" {
+		file, err := os.Open(app.Options.AWSPath)
 		if err != nil {
-			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to parse aws json: %w", err)
+			return nil, nil, fmt.Errorf("failed to open AWS JSON file: %w", err)
 		}
+		defer file.Close()
 
-		awsCfg, err = aws.FetchEC2Instance(ctx, nil, awsFileReader, instanceID)
-		if err != nil {
-			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to fetch aws instance: %w", err)
-		}
-		defer fileCloser()
+		ec2Repo = awsUtils.NewJSONEC2Repo(file)
 	} else {
-		awsConfig, err := aws.NewEC2Client(ctx)
+		ec2Repo = awsUtils.NewEC2Repo(app.Session)
+	}
 
-		if err != nil {
-			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to create aws client: %w", err)
+	awsResources, err := ec2Repo.ListInstances(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to fetch AWS instances: %w", err)
+	}
+
+	return stateResources, awsResources, nil
+}
+
+func runCompare(app *pkg.App) error {
+	ctx := context.Background()
+
+	terraformResources, cloudResources, err := loadConfigs(ctx, app)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	groupedTerraform := common.GroupResourcesByType(terraformResources)
+	groupedCloud := common.GroupResourcesByType(cloudResources)
+
+	type driftGroup struct {
+		ResourceName string
+		Drifts       []types.Drift
+	}
+
+	var (
+		mu           sync.Mutex
+		driftResults = make(map[types.ResourceType][]driftGroup)
+		wg           sync.WaitGroup
+	)
+
+	seenTypes := map[types.ResourceType]struct{}{}
+	for k := range groupedTerraform {
+		seenTypes[k] = struct{}{}
+	}
+	for k := range groupedCloud {
+		seenTypes[k] = struct{}{}
+	}
+
+	for resourceType := range seenTypes {
+		tfResources := groupedTerraform[resourceType]
+		cloudResources := groupedCloud[resourceType]
+
+		cloudMap := make(map[string]types.Resource)
+		for _, r := range cloudResources {
+			cloudMap[r.Name] = r
 		}
-		awsCfg, err = aws.FetchEC2Instance(ctx, awsConfig, nil, instanceID)
-		if err != nil {
-			return nilParserConfig, nilParserConfig, fmt.Errorf("failed to fetch aws instance: %w", err)
+
+		for _, tfRes := range tfResources {
+			cloudRes, ok := cloudMap[tfRes.Name]
+			if !ok {
+				continue // or log if desired
+			}
+
+			wg.Add(1)
+			go func(rt types.ResourceType, old, new types.Resource) {
+				defer wg.Done()
+				result, err := drift.CompareEC2Configs(old, new)
+				if err != nil {
+					app.Logger.Debug("Failed to compare %s: %s", rt, err)
+					// optionally log
+					return
+				}
+				if len(result) == 0 {
+					return
+				}
+				mu.Lock()
+				driftResults[rt] = append(driftResults[rt], driftGroup{
+					ResourceName: old.Name,
+					Drifts:       result,
+				})
+				mu.Unlock()
+			}(resourceType, tfRes, cloudRes)
 		}
 	}
 
-	return parser.ParsedEC2Config{Name: instanceID, Data: tfConfig},
-		parser.ParsedEC2Config{Name: instanceID, Data: *awsCfg},
-		nil
+	wg.Wait()
+
+	// Print grouped drift results
+	o := output.NewOutput(app.Output)
+	for resourceType, groups := range driftResults {
+		fmt.Printf("\n==== Resource Type: %s ====\n", resourceType)
+		for _, group := range groups {
+			fmt.Printf("\n  Resource: %s\n", group.ResourceName)
+			o.PrintDrifts(group.Drifts)
+		}
+	}
+
+	return nil
 }
 
-var compareCmd = &cobra.Command{
-	Use:   "compare",
-	Short: "Compare a Terraform EC2 config against the actual AWS EC2 instance",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := context.Background()
-		tfConfig, awsConfig, err := loadConfigs(ctx, instanceID, awsJSONPath, tfPath)
-		if err != nil {
-			return err
-		}
-		drifts, err := drift.CompareEC2Configs(tfConfig, awsConfig)
-		if err != nil {
-			return err
-		}
-		fmt.Println(drifts)
+func NewCompareCmd() *cobra.Command {
+	opts := &pkg.CompareOptions{}
+	var outputType common.OutputType
 
-		drift.PrintDrifts(drifts)
-		return nil
-	},
-}
+	log := logger.NewLogger()
+	log.Info("Initializing app")
 
-func init() {
-	compareCmd.Flags().StringVarP(&instanceID, "instance-id", "i", "", "AWS EC2 instance ID")
-	compareCmd.Flags().StringVarP(&awsJSONPath, "aws-json", "j", "", "Path to sample AWS EC2 JSON file")
-	compareCmd.Flags().StringVarP(&tfPath, "tf-path", "t", "", "Path to Terraform HCL or state file (required)")
+	awsSession, err := session.NewSessionWithOptions(session.Options{
+		SharedConfigState: session.SharedConfigEnable,
+		Config:            aws.Config{Region: aws.String("us-east-1")},
+	})
+
+	if err != nil {
+		log.Error("Failed to create AWS session: %w", err)
+	}
+
+	app := pkg.NewApp(outputType, log, opts, awsSession)
+
+	compareCmd := &cobra.Command{
+		Use:   "compare",
+		Short: "Compare a Terraform EC2 config against the actual AWS EC2 instance",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCompare(app)
+		},
+	}
+
+	compareCmd.Flags().StringVarP(&opts.InstanceID, "instance-id", "i", "", "AWS EC2 instance ID")
+	compareCmd.Flags().StringVarP(&opts.AWSPath, "aws-json", "j", "", "Path to sample AWS EC2 JSON file")
+	compareCmd.Flags().StringVarP(&opts.TFPath, "tf-path", "t", "", "Path to Terraform HCL or state file (required)")
+	var outputFormat string
+	compareCmd.Flags().StringVarP(&outputFormat, "output", "o", "console", "Output format (console, json, diff, html, etc)")
+	outputType = common.OutputType(outputFormat)
+
 	compareCmd.MarkFlagRequired("instance-id")
 	// compareCmd.MarkFlagRequired("aws-json")
 	compareCmd.MarkFlagRequired("tf-path")
-
-	// compareCmd.PreRunE = func(cmd *cobra.Command, args []string) error {
-	// 	if instanceID == "" && awsJSONPath == "" {
-	// 		return fmt.Errorf("either --instance-id or --aws-json must be provided")
-	// 	}
-	// 	if instanceID != "" && awsJSONPath != "" {
-	// 		return fmt.Errorf("only one of --instance-id or --aws-json can be provided")
-	// 	}
-	// 	return nil
-	// }
-
-	rootCmd.AddCommand(compareCmd)
+	return compareCmd
 }
