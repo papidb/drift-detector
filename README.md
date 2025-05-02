@@ -176,20 +176,6 @@ The Drift Detector follows a modular, layered architecture to ensure separation 
 - Core logic (`drift`, `parser`, `aws/repository`) operates on `types` structs, unaware of CLI or output concerns.
 - Utilities (`file`, `logger`, `printer`) provide reusable services.
 
-**Diagram** (simplified):
-```
-CLI (cmd/)
-  ↓
-AppConfig (wires dependencies)
-  ↓
-[Parser] ↔ [DriftComparator] ↔ [EC2Repository]
-  ↓           ↓                  ↓
-[FileReader] [Logger]         [AWS SDK/JSON]
-  ↓           ↓                  ↓
-[Terraform] [Printer]        [AWS Data]
-```
-
----
 
 ## Testing and Coverage
 
@@ -261,11 +247,7 @@ Testing is a critical component of the Drift Detector to ensure reliability and 
 - **AWS Credentials**: Configured via environment variables, AWS CLI profiles, or shared config files (see [AWS SDK for Go](https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html)).
 - **Dependencies**:
   ```bash
-  go get github.com/spf13/cobra
-  go get github.com/sirupsen/logrus
-  go get github.com/fatih/color
-  go get github.com/aws/aws-sdk-go
-  go get github.com/stretchr/testify
+  go install
   ```
 
 ### Commands
