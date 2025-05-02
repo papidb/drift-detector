@@ -191,13 +191,25 @@ func TestLoadConfigs(t *testing.T) {
 				},
 			},
 			parser: &MockParser{
-				Resources: []types.Resource{{Name: "i-123", Type: types.ResourceType("aws_instance")}},
+				Resources: []types.Resource{
+					{Name: "i-123", Type: types.ResourceType("aws_instance")},
+					{Name: "i-456", Type: types.ResourceType("aws_instance")},
+				},
 			},
 			ec2Repo: &MockEC2Repository{
-				Resources: []types.Resource{{Name: "i-123", Type: types.ResourceType("aws_instance")}},
+				Resources: []types.Resource{
+					{Name: "i-123", Type: types.ResourceType("aws_instance")},
+					{Name: "i-456", Type: types.ResourceType("aws_instance")},
+				},
 			},
-			expectedTF:  []types.Resource{{Name: "i-123", Type: types.ResourceType("aws_instance")}},
-			expectedAWS: []types.Resource{{Name: "i-123", Type: types.ResourceType("aws_instance")}},
+			expectedTF: []types.Resource{
+				{Name: "i-123", Type: types.ResourceType("aws_instance")},
+				{Name: "i-456", Type: types.ResourceType("aws_instance")},
+			},
+			expectedAWS: []types.Resource{
+				{Name: "i-123", Type: types.ResourceType("aws_instance")},
+				{Name: "i-456", Type: types.ResourceType("aws_instance")},
+			},
 		},
 		{
 			name: "invalid Terraform file",
@@ -267,28 +279,59 @@ func TestLoadConfigs(t *testing.T) {
 
 func TestCompareResources(t *testing.T) {
 	log := &MockLogger{}
-	tfResource := types.Resource{
-		Name: "i-123",
-		Type: types.ResourceType("aws_instance"),
-		Data: map[string]interface{}{"instance_type": "t2.micro"},
+	tfResources := []types.Resource{
+		{
+			Name: "i-123",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t2.micro"},
+		},
+		{
+			Name: "i-456",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t2.micro"},
+		},
 	}
-	awsResource := types.Resource{
-		Name: "i-123",
-		Type: types.ResourceType("aws_instance"),
-		Data: map[string]interface{}{"instance_type": "t3.micro"},
+	awsResources := []types.Resource{
+		{
+			Name: "i-123",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t3.micro"},
+		},
+		{
+			Name: "i-456",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t3.micro"},
+		},
 	}
 
 	tests := []struct {
 		name           string
 		tfResources    []types.Resource
 		awsResources   []types.Resource
+		instanceIDs    []string
 		comparator     *MockDriftComparator
 		expectedDrifts map[types.ResourceType][]types.DriftGroup
 	}{
 		{
-			name:         "detected drifts",
-			tfResources:  []types.Resource{tfResource},
-			awsResources: []types.Resource{awsResource},
+			name:         "detected drifts with all instances",
+			tfResources:  tfResources,
+			awsResources: awsResources,
+			instanceIDs:  []string{},
+			comparator: &MockDriftComparator{
+				Drifts: []types.Drift{{Name: "instance_type", OldValue: "t2.micro", NewValue: "t3.micro"}},
+			},
+			expectedDrifts: map[types.ResourceType][]types.DriftGroup{
+				types.ResourceType("aws_instance"): {
+					{ResourceName: "i-123", Drifts: []types.Drift{{Name: "instance_type", OldValue: "t2.micro", NewValue: "t3.micro"}}},
+					{ResourceName: "i-456", Drifts: []types.Drift{{Name: "instance_type", OldValue: "t2.micro", NewValue: "t3.micro"}}},
+				},
+			},
+		},
+		{
+			name:         "filtered to one instance",
+			tfResources:  tfResources,
+			awsResources: awsResources,
+			instanceIDs:  []string{"i-123"},
 			comparator: &MockDriftComparator{
 				Drifts: []types.Drift{{Name: "instance_type", OldValue: "t2.micro", NewValue: "t3.micro"}},
 			},
@@ -299,16 +342,26 @@ func TestCompareResources(t *testing.T) {
 			},
 		},
 		{
+			name:           "filtered to non-matching instance",
+			tfResources:    tfResources,
+			awsResources:   awsResources,
+			instanceIDs:    []string{"i-789"},
+			comparator:     &MockDriftComparator{},
+			expectedDrifts: map[types.ResourceType][]types.DriftGroup{},
+		},
+		{
 			name:           "no matching resources",
-			tfResources:    []types.Resource{{Name: "i-456", Type: types.ResourceType("aws_instance")}},
-			awsResources:   []types.Resource{awsResource},
+			tfResources:    []types.Resource{{Name: "i-789", Type: types.ResourceType("aws_instance")}},
+			awsResources:   awsResources,
+			instanceIDs:    []string{"i-123"},
 			comparator:     &MockDriftComparator{},
 			expectedDrifts: map[types.ResourceType][]types.DriftGroup{},
 		},
 		{
 			name:         "compare error",
-			tfResources:  []types.Resource{tfResource},
-			awsResources: []types.Resource{awsResource},
+			tfResources:  tfResources,
+			awsResources: awsResources,
+			instanceIDs:  []string{"i-123"},
 			comparator: &MockDriftComparator{
 				Err: errors.New("compare failed"),
 			},
@@ -316,8 +369,9 @@ func TestCompareResources(t *testing.T) {
 		},
 		{
 			name:         "no drifts",
-			tfResources:  []types.Resource{tfResource},
-			awsResources: []types.Resource{awsResource},
+			tfResources:  tfResources,
+			awsResources: awsResources,
+			instanceIDs:  []string{"i-123"},
 			comparator: &MockDriftComparator{
 				Drifts: []types.Drift{},
 			},
@@ -327,7 +381,7 @@ func TestCompareResources(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := compareResources(tt.tfResources, tt.awsResources, tt.comparator, log)
+			result := compareResources(tt.tfResources, tt.awsResources, tt.comparator, log, tt.instanceIDs)
 			assert.Equal(t, tt.expectedDrifts, result)
 		})
 	}
@@ -353,26 +407,42 @@ func TestRunCompare(t *testing.T) {
 	config := &AppConfig{
 		Logger: log,
 		Options: &CompareOptions{
-			TFPath: "terraform.tfstate",
+			TFPath:      "terraform.tfstate",
+			InstanceIDs: []string{"i-123"},
 		},
 		OutputType: common.OutputType("console"),
 	}
 
-	tfResource := types.Resource{
-		Name: "i-123",
-		Type: types.ResourceType("aws_instance"),
-		Data: map[string]interface{}{"instance_type": "t2.micro"},
+	tfResources := []types.Resource{
+		{
+			Name: "i-123",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t2.micro"},
+		},
+		{
+			Name: "i-456",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t2.micro"},
+		},
 	}
-	awsResource := types.Resource{
-		Name: "i-123",
-		Type: types.ResourceType("aws_instance"),
-		Data: map[string]interface{}{"instance_type": "t3.micro"},
+	awsResources := []types.Resource{
+		{
+			Name: "i-123",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t3.micro"},
+		},
+		{
+			Name: "i-456",
+			Type: types.ResourceType("aws_instance"),
+			Data: map[string]interface{}{"instance_type": "t3.micro"},
+		},
 	}
 
 	tests := []struct {
 		name           string
 		tfResources    []types.Resource
 		awsResources   []types.Resource
+		instanceIDs    []string
 		comparator     *MockDriftComparator
 		drifts         []types.Drift
 		printer        printer.Printer
@@ -380,9 +450,10 @@ func TestRunCompare(t *testing.T) {
 		expectedErrMsg string
 	}{
 		{
-			name:         "detected drifts",
-			tfResources:  []types.Resource{tfResource},
-			awsResources: []types.Resource{awsResource},
+			name:         "detected drifts for filtered instance",
+			tfResources:  tfResources,
+			awsResources: awsResources,
+			instanceIDs:  []string{"i-123"},
 			comparator: &MockDriftComparator{
 				Drifts: []types.Drift{{Name: "instance_type", OldValue: "t2.micro", NewValue: "t3.micro"}},
 			},
@@ -402,6 +473,7 @@ func TestRunCompare(t *testing.T) {
 			name:           "load configs error",
 			tfResources:    []types.Resource{},
 			awsResources:   []types.Resource{},
+			instanceIDs:    []string{"i-123"},
 			comparator:     &MockDriftComparator{},
 			drifts:         []types.Drift{},
 			printer:        &MockPrinter{},
@@ -429,6 +501,7 @@ func TestRunCompare(t *testing.T) {
 					"terraform.tfstate": nil,
 				},
 			}
+			config.Options.InstanceIDs = tt.instanceIDs
 			if tt.expectedErrMsg != "" {
 				config.FileReader = &MockFileReader{
 					Err: map[string]error{
@@ -469,7 +542,7 @@ func TestNewCompareCmd(t *testing.T) {
 
 	// Verify flags
 	flags := cmd.Flags()
-	assert.NotNil(t, flags.Lookup("instance-id"))
+	assert.NotNil(t, flags.Lookup("instance-ids"))
 	assert.NotNil(t, flags.Lookup("aws-json"))
 	assert.NotNil(t, flags.Lookup("tf-path"))
 	assert.NotNil(t, flags.Lookup("output"))
@@ -479,8 +552,7 @@ func TestNewCompareCmd(t *testing.T) {
 	assert.Equal(t, "console", outputFlag)
 
 	// Verify required flags
-	// Instead of checking annotations, test that the flags are marked as required by attempting to run without them
 	err := cmd.ValidateRequiredFlags()
 	assert.Error(t, err, "expected error when required flags are not set")
-	assert.Contains(t, err.Error(), "required flag(s) \"instance-id\", \"tf-path\"")
+	assert.Contains(t, err.Error(), "required flag(s) \"instance-ids\", \"tf-path\"")
 }

@@ -19,10 +19,9 @@ import (
 )
 
 type CompareOptions struct {
-	InstanceID string
-	TFPath     string
-	AWSPath    string
-	// Instances  []string
+	InstanceIDs []string
+	TFPath      string
+	AWSPath     string
 }
 
 // AppConfig holds dependencies for the command
@@ -93,9 +92,31 @@ func loadConfigs(ctx context.Context, config *AppConfig) ([]types.Resource, []ty
 }
 
 // compareResources compares Terraform and AWS resources, returning grouped drifts
-func compareResources(tfResources, awsResources []types.Resource, comparator drift.DriftComparator, logger logger.Logger) map[types.ResourceType][]types.DriftGroup {
-	groupedTerraform := common.GroupResourcesByType(tfResources)
-	groupedCloud := common.GroupResourcesByType(awsResources)
+func compareResources(tfResources, awsResources []types.Resource, comparator drift.DriftComparator, logger logger.Logger, instanceIDs []string) map[types.ResourceType][]types.DriftGroup {
+	// Filter resources by instance IDs if provided
+	var filteredTFResources, filteredAWSResources []types.Resource
+	if len(instanceIDs) > 0 {
+		idSet := make(map[string]struct{})
+		for _, id := range instanceIDs {
+			idSet[id] = struct{}{}
+		}
+		for _, res := range tfResources {
+			if _, ok := idSet[res.Name]; ok {
+				filteredTFResources = append(filteredTFResources, res)
+			}
+		}
+		for _, res := range awsResources {
+			if _, ok := idSet[res.Name]; ok {
+				filteredAWSResources = append(filteredAWSResources, res)
+			}
+		}
+	} else {
+		filteredTFResources = tfResources
+		filteredAWSResources = awsResources
+	}
+
+	groupedTerraform := common.GroupResourcesByType(filteredTFResources)
+	groupedCloud := common.GroupResourcesByType(filteredAWSResources)
 
 	driftResults := make(map[types.ResourceType][]types.DriftGroup)
 
@@ -149,7 +170,7 @@ func runCompare(config *AppConfig) error {
 		return err
 	}
 
-	driftResults := compareResources(tfResources, awsResources, config.Comparator, config.Logger)
+	driftResults := compareResources(tfResources, awsResources, config.Comparator, config.Logger, config.Options.InstanceIDs)
 
 	for resourceType, groups := range driftResults {
 		for _, group := range groups {
@@ -183,16 +204,16 @@ func NewCompareCmd() *cobra.Command {
 		Short: "Compare a Terraform EC2 config against the actual AWS EC2 instance",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			config.OutputType = common.OutputType(cmd.Flag("output").Value.String())
-			config.DriftPrinter = printer.NewPrinter(outputType)
+			config.DriftPrinter = printer.NewPrinter(config.OutputType)
 			return runCompare(config)
 		},
 	}
 
-	compareCmd.Flags().StringVarP(&opts.InstanceID, "instance-id", "i", "", "AWS EC2 instance ID")
+	compareCmd.Flags().StringSliceVarP(&opts.InstanceIDs, "instance-ids", "i", []string{}, "AWS EC2 instance IDs (comma-separated or multiple flags)")
 	compareCmd.Flags().StringVarP(&opts.AWSPath, "aws-json", "j", "", "Path to sample AWS EC2 JSON file")
 	compareCmd.Flags().StringVarP(&opts.TFPath, "tf-path", "t", "", "Path to Terraform HCL or state file (required)")
 	compareCmd.Flags().String("output", "console", "Output format (console, json, diff, html, etc)")
-	compareCmd.MarkFlagRequired("instance-id")
+	compareCmd.MarkFlagRequired("instance-ids")
 	compareCmd.MarkFlagRequired("tf-path")
 
 	return compareCmd
