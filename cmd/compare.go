@@ -191,7 +191,7 @@ func NewCompareCmd() *cobra.Command {
 
 	awsSession, err := session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
-		Config:            aws.Config{Region: aws.String("us-east-1")},
+		Config:            aws.Config{Region: aws.String("us-west-2")},
 	})
 	if err != nil {
 		log.Error("Failed to create AWS session: %w", err)
