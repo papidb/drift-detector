@@ -6,3 +6,8 @@ type Drift struct {
 	OldValue interface{}
 	NewValue interface{}
 }
+
+type DriftGroup struct {
+	ResourceName string
+	Drifts       []Drift
+}

@@ -1,55 +1,87 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"io"
-	"os"
-	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/papidb/drift-detector/internal/drift-detectors"
 	"github.com/papidb/drift-detector/internal/types"
-	"github.com/papidb/drift-detector/pkg"
-
 	awsRepository "github.com/papidb/drift-detector/pkg/cloud/aws/repository"
 	"github.com/papidb/drift-detector/pkg/common"
+	"github.com/papidb/drift-detector/pkg/file"
 	"github.com/papidb/drift-detector/pkg/logger"
-	"github.com/papidb/drift-detector/pkg/output"
 	"github.com/papidb/drift-detector/pkg/parser"
+	"github.com/papidb/drift-detector/pkg/printer"
 	"github.com/spf13/cobra"
 )
 
-func loadConfigs(ctx context.Context, app *pkg.App) ([]types.Resource, []types.Resource, error) {
-	app.Logger.Debug("Loading AWS config")
-	file, err := os.Open(app.Options.TFPath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to open state file: %w", err)
+type CompareOptions struct {
+	InstanceID string
+	TFPath     string
+	AWSPath    string
+	// Instances  []string
+}
+
+// AppConfig holds dependencies for the command
+type AppConfig struct {
+	Logger         logger.Logger
+	Session        *session.Session
+	Options        *CompareOptions
+	OutputType     common.OutputType
+	FileReader     file.FileReader
+	DriftPrinter   printer.Printer
+	Parser         parser.Parser
+	Comparator     drift.DriftComparator
+	EC2RepoFactory func(*session.Session, string, file.FileReader, logger.Logger) awsRepository.EC2Repository
+}
+
+// NewAppConfig creates a new AppConfig with default dependencies
+func NewAppConfig(outputType common.OutputType, log logger.Logger, options *CompareOptions, sess *session.Session) *AppConfig {
+	return &AppConfig{
+		Logger:       log,
+		Session:      sess,
+		Options:      options,
+		OutputType:   outputType,
+		FileReader:   &file.OSFileReader{},
+		DriftPrinter: printer.NewPrinter(outputType),
+		Parser:       parser.NewParser(),
+		Comparator:   drift.NewDriftComparator(),
+		EC2RepoFactory: func(sess *session.Session, awsPath string, reader file.FileReader, log logger.Logger) awsRepository.EC2Repository {
+			if awsPath != "" {
+				data, err := reader.ReadFile(awsPath)
+				if err != nil {
+					log.Error("Failed to read AWS JSON file: %w", err)
+					return nil
+				}
+				return awsRepository.NewJSONEC2Repo(bytes.NewReader(data))
+			}
+			return awsRepository.NewEC2Repo(sess)
+		},
 	}
-	defer file.Close()
-	data, err := io.ReadAll(file)
+}
+
+// loadConfigs loads Terraform and AWS resources
+func loadConfigs(ctx context.Context, config *AppConfig) ([]types.Resource, []types.Resource, error) {
+	config.Logger.Debug("Loading configs")
+
+	// Read Terraform state file
+	data, err := config.FileReader.ReadFile(config.Options.TFPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read state file: %w", err)
+		return nil, nil, err
 	}
 
-	stateResources, err := parser.ParseTerraformStateFile(data)
+	stateResources, err := config.Parser.ParseTerraformStateFile(data)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse tf config: %w", err)
 	}
 
-	var ec2Repo awsRepository.EC2Repository
-
-	if app.Options.AWSPath != "" {
-		file, err := os.Open(app.Options.AWSPath)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to open AWS JSON file: %w", err)
-		}
-		defer file.Close()
-
-		ec2Repo = awsRepository.NewJSONEC2Repo(file)
-	} else {
-		ec2Repo = awsRepository.NewEC2Repo(app.Session)
+	// Create EC2 repository
+	ec2Repo := config.EC2RepoFactory(config.Session, config.Options.AWSPath, config.FileReader, config.Logger)
+	if ec2Repo == nil {
+		return nil, nil, fmt.Errorf("failed to create EC2 repository")
 	}
 
 	awsResources, err := ec2Repo.ListInstances(ctx)
@@ -60,30 +92,14 @@ func loadConfigs(ctx context.Context, app *pkg.App) ([]types.Resource, []types.R
 	return stateResources, awsResources, nil
 }
 
-func runCompare(app *pkg.App) error {
-	ctx := context.Background()
+// compareResources compares Terraform and AWS resources, returning grouped drifts
+func compareResources(tfResources, awsResources []types.Resource, comparator drift.DriftComparator, logger logger.Logger) map[types.ResourceType][]types.DriftGroup {
+	groupedTerraform := common.GroupResourcesByType(tfResources)
+	groupedCloud := common.GroupResourcesByType(awsResources)
 
-	terraformResources, cloudResources, err := loadConfigs(ctx, app)
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
+	driftResults := make(map[types.ResourceType][]types.DriftGroup)
 
-	groupedTerraform := common.GroupResourcesByType(terraformResources)
-	groupedCloud := common.GroupResourcesByType(cloudResources)
-
-	type driftGroup struct {
-		ResourceName string
-		Drifts       []types.Drift
-	}
-
-	var (
-		mu           sync.Mutex
-		driftResults = make(map[types.ResourceType][]driftGroup)
-		wg           sync.WaitGroup
-	)
-
-	seenTypes := map[types.ResourceType]struct{}{}
+	seenTypes := make(map[types.ResourceType]struct{})
 	for k := range groupedTerraform {
 		seenTypes[k] = struct{}{}
 	}
@@ -103,48 +119,50 @@ func runCompare(app *pkg.App) error {
 		for _, tfRes := range tfResources {
 			cloudRes, ok := cloudMap[tfRes.Name]
 			if !ok {
-				continue // or log if desired
+				continue
 			}
 
-			wg.Add(1)
-			go func(rt types.ResourceType, old, new types.Resource) {
-				defer wg.Done()
-				result, err := drift.CompareEC2Configs(old, new)
-				if err != nil {
-					app.Logger.Debug("Failed to compare %s: %s", rt, err)
-					// optionally log
-					return
-				}
-				if len(result) == 0 {
-					return
-				}
-				mu.Lock()
-				driftResults[rt] = append(driftResults[rt], driftGroup{
-					ResourceName: old.Name,
+			result, err := comparator.CompareEC2Configs(tfRes, cloudRes)
+			if err != nil {
+				logger.Debug("Failed to compare %s: %s", resourceType, err)
+				continue
+			}
+			if len(result) > 0 {
+				driftResults[resourceType] = append(driftResults[resourceType], types.DriftGroup{
+					ResourceName: tfRes.Name,
 					Drifts:       result,
 				})
-				mu.Unlock()
-			}(resourceType, tfRes, cloudRes)
+			}
 		}
 	}
 
-	wg.Wait()
+	return driftResults
+}
 
-	// Print grouped drift results
-	o := output.NewOutput(app.Output)
+// runCompare executes the comparison and prints results
+func runCompare(config *AppConfig) error {
+	ctx := context.Background()
+
+	tfResources, awsResources, err := loadConfigs(ctx, config)
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	driftResults := compareResources(tfResources, awsResources, config.Comparator, config.Logger)
+
 	for resourceType, groups := range driftResults {
-		fmt.Printf("\n==== Resource Type: %s ====\n", resourceType)
 		for _, group := range groups {
-			fmt.Printf("\n  Resource: %s\n", group.ResourceName)
-			o.PrintDrifts(group.Drifts)
+			config.DriftPrinter.PrintDrifts(resourceType, group.ResourceName, group.Drifts)
 		}
 	}
 
 	return nil
 }
 
+// NewCompareCmd creates the Cobra command
 func NewCompareCmd() *cobra.Command {
-	opts := &pkg.CompareOptions{}
+	opts := &CompareOptions{}
 	var outputType common.OutputType
 
 	log := logger.NewLogger()
@@ -154,30 +172,28 @@ func NewCompareCmd() *cobra.Command {
 		SharedConfigState: session.SharedConfigEnable,
 		Config:            aws.Config{Region: aws.String("us-east-1")},
 	})
-
 	if err != nil {
 		log.Error("Failed to create AWS session: %w", err)
 	}
 
-	app := pkg.NewApp(outputType, log, opts, awsSession)
+	config := NewAppConfig(outputType, log, opts, awsSession)
 
 	compareCmd := &cobra.Command{
 		Use:   "compare",
 		Short: "Compare a Terraform EC2 config against the actual AWS EC2 instance",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCompare(app)
+			config.OutputType = common.OutputType(cmd.Flag("output").Value.String())
+			config.DriftPrinter = printer.NewPrinter(outputType)
+			return runCompare(config)
 		},
 	}
 
 	compareCmd.Flags().StringVarP(&opts.InstanceID, "instance-id", "i", "", "AWS EC2 instance ID")
 	compareCmd.Flags().StringVarP(&opts.AWSPath, "aws-json", "j", "", "Path to sample AWS EC2 JSON file")
 	compareCmd.Flags().StringVarP(&opts.TFPath, "tf-path", "t", "", "Path to Terraform HCL or state file (required)")
-	var outputFormat string
-	compareCmd.Flags().StringVarP(&outputFormat, "output", "o", "console", "Output format (console, json, diff, html, etc)")
-	outputType = common.OutputType(outputFormat)
-
+	compareCmd.Flags().String("output", "console", "Output format (console, json, diff, html, etc)")
 	compareCmd.MarkFlagRequired("instance-id")
-	// compareCmd.MarkFlagRequired("aws-json")
 	compareCmd.MarkFlagRequired("tf-path")
+
 	return compareCmd
 }

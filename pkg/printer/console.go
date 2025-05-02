@@ -1,4 +1,4 @@
-package output
+package printer
 
 import (
 	"fmt"
@@ -7,13 +7,16 @@ import (
 	"github.com/papidb/drift-detector/internal/types"
 )
 
-type ConsoleOutPut struct{}
+type ConsolePrinter struct{}
 
-func NewConsoleOutPut() *ConsoleOutPut {
-	return &ConsoleOutPut{}
+func NewConsolePrinter() *ConsolePrinter {
+	return &ConsolePrinter{}
 }
 
-func (o *ConsoleOutPut) PrintDrifts(drifts []types.Drift) {
+func (o *ConsolePrinter) PrintDrifts(resourceType types.ResourceType, resourceName string, drifts []types.Drift) {
+	fmt.Printf("\n==== Resource Type: %s ====\n", resourceType)
+	fmt.Printf("\n  Resource: %s\n", resourceName)
+
 	yellow := color.New(color.FgYellow).SprintFunc()
 	green := color.New(color.FgGreen).SprintFunc()
 	red := color.New(color.FgRed).SprintFunc()
