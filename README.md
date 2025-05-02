@@ -29,14 +29,14 @@ The following tasks outline the development and enhancement roadmap for the Drif
 
 4. **Testing and Validation**:
    - Write unit tests for all packages (`cmd`, `internal/drift`, `internal/parser`, `pkg/*`).
-   - Achieve at least 80% test coverage across the codebase.
+   - Achieve at least 95% test coverage across the codebase.
    - Include integration tests using sample Terraform state and AWS JSON files.
 
 5. **Future Enhancements**:
    - Support additional AWS resources (e.g., S3, RDS) beyond EC2.
    - Add support for Terraform JSON files alongside HCL/state files.
    - Implement a `--fix` command to generate Terraform code to reconcile drifts.
-   - Improve output readability with tabular or markdown formats.
+   - Improve output readability with other formats.
 
 ---
 
@@ -91,7 +91,7 @@ Key decisions made during development to ensure functionality, maintainability, 
 
 4. **Output Handling**:
    - **Choice**: Implement a `printer.Printer` interface with a `ConsolePrinter` for colorful, human-readable output.
-   - **Reason**: Decouples output formatting from comparison logic, allowing easy addition of new formats (e.g., JSON, HTML).
+   - **Reason**: Decouples output formatting from comparison logic, allowing easy addition of new formats (e.g. console, JSON, HTML).
    - **Detail**: Console output uses `github.com/fatih/color` for green (AWS) and red (Terraform) indicators.
 
 5. **Logging**:
@@ -216,13 +216,13 @@ Testing is a critical component of the Drift Detector to ensure reliability and 
   Executes `go test -cover ./...` and generates a coverage report.
 
 ### Current Coverage
-- **Target**: Achieve at least 80% code coverage across all packages.
+- **Target**: Achieve at least 95% code coverage across all packages.
 - **Current Status**: 
   - `cmd`: High coverage due to comprehensive tests for `compare` command, including resource filtering and error cases.
   - `internal/drift`: Moderate coverage; needs more edge cases for complex attribute comparisons.
   - `internal/parser`: High coverage for state file parsing; needs tests for malformed inputs.
   - `pkg/printer`: High coverage for console output; needs tests for JSON and other formats.
-  - **Overall**: Estimated at ~75%; additional tests for edge cases and integration scenarios needed to reach 80%.
+  - **Overall**: Estimated at ~85%; additional tests for edge cases and integration scenarios needed to reach 95%.
 
 ### Test Suite Details
 - **cmd/compare_test.go**:
@@ -320,7 +320,7 @@ drift-detector/
 
 ### Contributing
 - Follow Go coding standards and run `gofmt` on all code.
-- Write unit tests for new functionality, targeting 80% coverage.
+- Write unit tests for new functionality, targeting 95% coverage.
 - Update `README.md` with new features or changes.
 
 ---
@@ -394,7 +394,7 @@ For issues, feature requests, or contributions, please open a pull request or is
   - If you have specific priorities or additional tasks, I can refine the list.
 
 - **Testing Coverage**:
-  - The coverage estimate (~75%) is based on the test suite provided. To get an accurate number, run `make test-coverage` and update the README with the result.
-  - If you need help writing additional tests to reach 80% coverage, I can provide specific test cases.
+  - The coverage estimate (~85%) is based on the test suite provided. To get an accurate number, run `make test-coverage` and update the README with the result.
+  - If you need help writing additional tests to reach 95% coverage, I can provide specific test cases.
 
 If you need further refinements to the README (e.g., specific task details, additional sections, or alignment with other project changes), or if you encounter issues with the updated `compare.go` or `compare_test.go`, please share the details, and I’ll provide the necessary updates!
